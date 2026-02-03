@@ -1,0 +1,16 @@
+distributed==unknown
+libraries==unknown
+matplotlib==unknown
+numpy==unknown
+pandas==unknown
+seaborn==unknown
+KNeighborsClassifier==unknown
+colors==unknown
+euclidean_distances==unknown
+load_iris==unknown
+make_blobs==unknown
+sklearn==unknown
+train_test_split==unknown
+mysql-connector-python
+openai
+python-dotenv

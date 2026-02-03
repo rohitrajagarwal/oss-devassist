@@ -1,0 +1,19 @@
+# Core dependencies
+flask==3.0.0
+streamlit==1.31.0
+requests==2.31.0
+python-dotenv==1.0.0
+
+# Database
+mysql-connector-python==8.2.0
+
+# AI/ML - Updated to compatible versions
+openai>=1.12.0
+httpx>=0.24.0
+
+# Data analysis (if needed)
+pandas==2.1.4
+numpy==1.26.3
+
+# Server
+gunicorn==21.2.0
