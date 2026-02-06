@@ -907,7 +907,7 @@ def generate_risk_summary(package_name: str, vulnerabilities: list, file_context
 
 
 def generate_all_risk_summaries(repo_path: str, vulnerability_report: dict):
-    """Generate risk summaries for all vulnerable packages."""
+    """Generate risk summaries for all vulnerable packages (per vulnerability)."""
     summaries = {}
 
     # Get vulnerable packages
@@ -919,32 +919,36 @@ def generate_all_risk_summaries(repo_path: str, vulnerability_report: dict):
 
         # Find files that use this package
         package_files = find_files_using_package(repo_path, package_name)
+        rel_files = [os.path.relpath(p, repo_path) for p in package_files[:3]]
 
         if not package_files:
-            # If no specific files found, use a generic summary
-            file_context = f"Package {package_name} found in repository but specific usage files not identified."
-            summary = generate_risk_summary(package_name, vuln_list, file_context)
-            summaries[package_name] = {
-                "summary": summary,
-                "files": [],
-                "vulnerabilities": len(vuln_list)
-            }
-            continue
-
-        # Generate summary for each file
-        file_summaries = []
-        for file_path in package_files[:3]:  # Limit to 3 files per package
-            file_context = extract_file_context(file_path, [{"name": package_name}])
-            summary = generate_risk_summary(package_name, vuln_list, file_context)
-            file_summaries.append({
-                "file": os.path.relpath(file_path, repo_path),
-                "summary": summary
-            })
+            base_context = (
+                f"Package {package_name} found in repository but specific usage files not identified."
+            )
+        else:
+            contexts = []
+            for file_path in package_files[:3]:  # Limit to 3 files per package
+                ctx = extract_file_context(file_path, [{"name": package_name}])
+                if ctx:
+                    contexts.append(f"FILE: {os.path.relpath(file_path, repo_path)}\n{ctx}")
+            base_context = "\n\n".join(contexts) if contexts else (
+                f"Package {package_name} found in repository but file context was empty."
+            )
 
         summaries[package_name] = {
-            "summaries": file_summaries,
-            "vulnerabilities": len(vuln_list)
+            "vulnerabilities": {},
+            "files": rel_files,
+            "vulnerabilities_count": len(vuln_list)
         }
+
+        # Generate summary per vulnerability
+        for vuln in vuln_list:
+            vuln_id = vuln.get("id") or "UNKNOWN_ID"
+            summary = generate_risk_summary(package_name, [vuln], base_context)
+            summaries[package_name]["vulnerabilities"][vuln_id] = {
+                "summary": summary,
+                "files": rel_files
+            }
 
     print(summaries)
     return summaries
@@ -1031,6 +1035,10 @@ def import_vulnerability_data_to_db(repo_url, risk_summaries=None):
 
         # Get project ID
         p_id = get_or_create_project_id(cursor, repo_url)
+
+        # Clean existing rows for this project to avoid duplicates when unique keys are missing
+        cursor.execute("DELETE FROM package_vulnerabilities WHERE p_id = %s", (p_id,))
+        cursor.execute("DELETE FROM packages WHERE p_id = %s", (p_id,))
 
         # Load vulnerability report
         script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -1131,11 +1139,13 @@ def import_vulnerability_data_to_db(repo_url, risk_summaries=None):
                         # Get risk summary for this package-vulnerability combination
                         risk_summary = None
                         if risk_summaries:
-                            # Look for risk summary by package name
-                            for package_name, package_data in risk_summaries.items():
-                                if package_name == pkg_name:
-                                    risk_summary = package_data.get("summary")
-                                    break
+                            package_data = risk_summaries.get(pkg_name, {})
+                            vuln_summaries = package_data.get("vulnerabilities", {})
+                            if v_id in vuln_summaries:
+                                risk_summary = vuln_summaries[v_id].get("summary")
+                            else:
+                                # Backward compatibility with older per-package summaries
+                                risk_summary = package_data.get("summary")
 
                         # Insert package-vulnerability link
                         cursor.execute(pkg_vuln_upsert, (
@@ -1253,13 +1263,19 @@ def main():
             risk_summaries = {}
             for package_name, vuln_list in vulnerabilities.items():
                 if vuln_list:
-                    # Generate summary without specific file context
                     file_context = f"Package {package_name} loaded from extracted_packages.txt"
-                    summary = generate_risk_summary(package_name, vuln_list, file_context)
                     risk_summaries[package_name] = {
-                        "summary": summary,
-                        "vulnerabilities": len(vuln_list)
+                        "vulnerabilities": {},
+                        "files": [],
+                        "vulnerabilities_count": len(vuln_list)
                     }
+                    for vuln in vuln_list:
+                        vuln_id = vuln.get("id") or "UNKNOWN_ID"
+                        summary = generate_risk_summary(package_name, [vuln], file_context)
+                        risk_summaries[package_name]["vulnerabilities"][vuln_id] = {
+                            "summary": summary,
+                            "files": []
+                        }
             
             if risk_summaries:
                 # Save risk summaries
